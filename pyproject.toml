@@ -12,7 +12,7 @@ classifiers = [
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
 ]
-
+f
 [project.urls]
 Homepage = "https://github.com/josephisaacturner/easyreg_standalone"
 Issues = "https://github.com/josephisaacturner/easyreg_standalone/issues"
