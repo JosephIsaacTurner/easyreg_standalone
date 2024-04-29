@@ -1,0 +1,18 @@
+[project]
+name = "easyreg_standalone_josephisaacturner"
+version = "0.0.1"
+authors = [
+  { name="Joseph Turner", email="jiturner@bwh.harvard.edu" },
+]
+description = "A standalone version of FreeSurfer's easyreg"
+readme = "README.md"
+requires-python = ">=3.8"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+
+[project.urls]
+Homepage = "https://github.com/josephisaacturner/easyreg_standalone"
+Issues = "https://github.com/josephisaacturner/easyreg_standalone/issues"
