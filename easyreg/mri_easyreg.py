@@ -31,7 +31,7 @@ def main():
     parser.add_argument("--flo", help="Floating image.")
     parser.add_argument("--flo_seg", help="Floating SynthSeg segmentation (will be created if it does not exist).")
     parser.add_argument("--ref_reg", help="(optional) Registered referenced.")
-    parser.add_argument("--flo_reg", help="(optional) Registetred floating images (in space of reference).")
+    parser.add_argument("--flo_reg", help="(optional) Registered floating images (in space of reference).")
     parser.add_argument("--fwd_field", help="(optional) Forward field")
     parser.add_argument("--bak_field", help="(optional) Inverse field")
     parser.add_argument("--affine_only", action="store_true", help="(optional) Skips nonlinear part")
@@ -40,19 +40,19 @@ def main():
     # parse commandline
     args = parser.parse_args()
 
-    ref = args.get('ref', None)
-    ref_seg = args.get('ref_seg', None)
-    flo = args.get('flo', None)
-    flo_seg = args.get('flo_seg', None)
-    ref_reg = args.get('ref_reg', None)
-    flo_reg = args.get('flo_reg', None)
-    fwd_field = args.get('fwd_field', None)
-    bak_field = args.get('bak_field', None)
-    affine_only = args.get('affine_only', None)
-    threads = args.get('threads', None)
+    ref = args.ref
+    ref_seg = args.ref_seg
+    flo = args.flo
+    flo_seg = args.flo_seg
+    ref_reg = args.ref_reg
+    flo_reg = args.flo_reg
+    fwd_field = args.fwd_field
+    bak_field = args.bak_field
+    affine_only = args.affine_only
+    threads = args.threads
 
     register_images(ref, ref_seg, flo, flo_seg, ref_reg, flo_reg, fwd_field, bak_field, affine_only, threads)
-
+    
 def register_images(ref, ref_seg, flo, flo_seg, ref_reg=None, flo_reg=None, fwd_field=None, bak_field=None, affine_only=False, threads=1):
     """
     Perform image registration.

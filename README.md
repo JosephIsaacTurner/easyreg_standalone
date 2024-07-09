@@ -14,13 +14,13 @@ To install, simply clone the repository and run the setup script:
 ```bash
 git clone https://github.com/josephisaacturner/easyreg_standalone.git
 cd easyreg_standalone
-python setup.py install
+pip install -e .
 ```
 
 Or use pip:
 
 ```bash
-pip install easyreg-standalone
+pip install git+https://github.com/JosephIsaacTurner/easyreg_standalone.git
 ```
 
 ### Usage
