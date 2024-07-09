@@ -9,6 +9,10 @@ Useful for those who do not have FreeSurfer installed, or who want to use EasyRe
 
 ### Installation
 
+**Important Advisories**
+- If you are using a MacBook with Apple Silicon (M1/M2/M3), ensure that your TensorFlow installation is compatible with ARM architecture.
+= Requires TensorFlow version 2; TensorFlow version 3 is not supported.
+
 To install, simply clone the repository and run the setup script:
 
 ```bash

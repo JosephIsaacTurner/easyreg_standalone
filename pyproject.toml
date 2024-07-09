@@ -1,5 +1,9 @@
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
+
 [project]
-name = "easyreg_standalone_josephisaacturner"
+name = "easyreg_standalone"
 version = "0.0.1"
 authors = [
   { name="Joseph Turner", email="jiturner@bwh.harvard.edu" },
@@ -12,6 +16,22 @@ classifiers = [
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
 ]
+dependencies = [
+    "tensorflow==2.13.1",
+    "torch",
+    "scipy",
+    "neurite @ git+https://github.com/JosephIsaacTurner/neurite.git",
+    "voxelmorph",
+    "nibabel",
+    "nilearn",
+    "numpy",
+    "pandas"
+]
+
 [project.urls]
 Homepage = "https://github.com/josephisaacturner/easyreg_standalone"
 Issues = "https://github.com/josephisaacturner/easyreg_standalone/issues"
+
+[project.scripts]
+easyreg-mri = "easyreg.mri_easyreg:main"
+easywarp-mri = "easyreg.mri_easywarp:main"

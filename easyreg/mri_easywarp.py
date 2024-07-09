@@ -2,7 +2,6 @@ import os
 import argparse
 import numpy as np
 import torch
-import surfa as sf
 import nibabel as nib
 
 
@@ -47,9 +46,9 @@ def warp_image(input_image, output_image, field, nearest=False, threads=1):
     print('Reading deformation field')
     field_buffer, field_aff, field_h = load_volume(field, im_only=False, squeeze=True, dtype=None)
     if len(field_buffer.shape) !=4:
-        sf.system.fatal('field must be 4D array')
+        print('field must be 4D array')
     if field_buffer.shape[3] != 3:
-        sf.system.fatal('field must have 3 frames')
+        print('field must have 3 frames')
 
     print('Reading input image')
     input_buffer, input_aff, input_h = load_volume(input_image, im_only=False, squeeze=True, dtype=None)
@@ -192,12 +191,9 @@ def fast_3D_interp_torch(X, II, JJ, KK, mode):
         Y[ok] = c.float()
 
     else:
-        sf.system.fatal('mode must be linear or nearest')
+        print('mode must be linear or nearest')
 
     return Y
-
-
-
 
 # execute script
 if __name__ == '__main__':

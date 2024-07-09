@@ -1,8 +1,7 @@
-tensorflow
-keras
+tensorflow==2.13.1
 torch
-surfa
 scipy
+neurite @ git+https://github.com/JosephIsaacTurner/neurite.git
 voxelmorph
 nibabel
 nilearn

@@ -1,6 +1,10 @@
 import nilearn.image as nli
 import numpy as np
 import nibabel as nib
+import os
+from .mri_easyreg import register_images
+
+fs_home = os.path.dirname(os.path.realpath(__file__))
 
 def img_to_2mm(roi_reg_path, output_path):
     """
@@ -20,3 +24,6 @@ def img_to_2mm(roi_reg_path, output_path):
     two_mm_img_data[two_mm_img_data >= 0.9] = 1
     two_mm_img = nib.Nifti1Image(two_mm_img_data, affine)
     two_mm_img.to_filename(output_path)
+
+def register_images_mni_152(flo, flo_seg, ref=os.path.join(fs_home, 'mni152_mricron.nii.gz'), ref_seg=os.path.join(fs_home, 'mni152_mricron_seg.nii.gz'), ref_reg=None, flo_reg=None, fwd_field=None, bak_field=None, affine_only=False, threads=1):
+    register_images(ref, ref_seg, flo, flo_seg, ref_reg, flo_reg, fwd_field, bak_field, affine_only, threads)

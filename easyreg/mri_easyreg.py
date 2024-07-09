@@ -3,11 +3,9 @@ import argparse
 import numpy as np
 import voxelmorph as vxm
 import torch
-import surfa as sf
 import nibabel as nib
 from scipy.ndimage import gaussian_filter, binary_dilation, binary_erosion, distance_transform_edt, binary_fill_holes
 from scipy.ndimage import label as scipy_label
-from itertools import combinations
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
@@ -16,13 +14,17 @@ import keras
 import keras.backend as K
 import keras.layers as KL
 
+
 # set tensorflow logging
 tf.get_logger().setLevel('ERROR')
 K.set_image_data_format('channels_last')
 
+
+# Very first thing: we require FreeSurfer
 fs_home = os.path.dirname(os.path.realpath(__file__))
 
 def main():
+
     parser = argparse.ArgumentParser(description="EasyReg: deep learning registration simple and easy", epilog='\n')
 
     # input/outputs
@@ -31,10 +33,11 @@ def main():
     parser.add_argument("--flo", help="Floating image.")
     parser.add_argument("--flo_seg", help="Floating SynthSeg segmentation (will be created if it does not exist).")
     parser.add_argument("--ref_reg", help="(optional) Registered referenced.")
-    parser.add_argument("--flo_reg", help="(optional) Registered floating images (in space of reference).")
+    parser.add_argument("--flo_reg", help="(optional) Registetred floating images (in space of reference).")
     parser.add_argument("--fwd_field", help="(optional) Forward field")
     parser.add_argument("--bak_field", help="(optional) Inverse field")
     parser.add_argument("--affine_only", action="store_true", help="(optional) Skips nonlinear part")
+    parser.add_argument("--autocrop", action="store_true", help="(optional) Ignore background voxels in FOV.")
     parser.add_argument("--threads", type=int, default=1, help="(optional) Number of cores to be used. Default is 1. You can use -1 to use all available cores")
 
     # parse commandline
@@ -49,41 +52,25 @@ def main():
     fwd_field = args.fwd_field
     bak_field = args.bak_field
     affine_only = args.affine_only
+    autocrop = args.autocrop
     threads = args.threads
 
-    register_images(ref, ref_seg, flo, flo_seg, ref_reg, flo_reg, fwd_field, bak_field, affine_only, threads)
-    
-def register_images(ref, ref_seg, flo, flo_seg, ref_reg=None, flo_reg=None, fwd_field=None, bak_field=None, affine_only=False, threads=1):
-    """
-    Perform image registration.
+    register_images(ref, ref_seg, flo, flo_seg, ref_reg, flo_reg, fwd_field, bak_field, affine_only, autocrop, threads)
 
-    Parameters:
-    - ref: Reference image file path.
-    - ref_seg: Reference segmentation file path.
-    - flo: Floating image file path.
-    - flo_seg: Floating segmentation file path.
-    - ref_reg: Registered reference image file path (optional).
-    - flo_reg: Registered floating image file path (optional).
-    - fwd_field: Forward field file path (optional).
-    - bak_field: Inverse field file path (optional).
-    - affine_only: If True, skip the nonlinear registration part (optional).
-    - threads: Number of threads to use. Default is 1. Use -1 for all available cores.
-    """
+def register_images(ref, ref_seg, flo, flo_seg, ref_reg, flo_reg, fwd_field, bak_field, affine_only, autocrop, threads):
 
-    if threads == 1:
-        print('using 1 thread')
-    elif threads < 0:
-        threads = os.cpu_count()
-        print(f'using all available threads ({threads})')
-    else:
-        print(f'using {threads} threads')
+    #############
 
-    # Check for required inputs
-    if ref is None or flo is None or ref_seg is None or flo_seg is None:
-        raise ValueError("All image and segmentation inputs must be provided.")
-
-    if ref_reg is None and flo_reg is None and fwd_field is None and bak_field is None:
-        raise ValueError("Please provide at least one of: registered reference, registered floating, forward field, or backward field.")
+    if ref is None:
+        raise ValueError('Reference image must be provided')
+    if flo is None:
+        raise ValueError('Floating image must be provided')
+    if ref_seg is None:
+        raise ValueError('Reference segmentation must be provided')
+    if flo_seg is None:
+        raise ValueError('Floating segmentation must be provided')
+    if (ref_reg is None) and (flo_reg is None) and (fwd_field is None) and (bak_field is None):
+        raise ValueError('Please provide at least one of: registered reference, registered floating, forward field, or backward field')
 
     # limit the number of threads to be used if running on CPU
     if threads == 1:
@@ -118,14 +105,19 @@ def register_images(ref, ref_seg, flo, flo_seg, ref_reg=None, flo_reg=None, fwd_
         print('Segmentation of reference image already exists; reading from disk')
         ref_seg_buffer, ref_seg_aff, ref_h = load_volume(ref_seg, im_only=False, squeeze=True, dtype=None, aff_ref=None)
         if np.sum(ref_seg_buffer>1000)==0:
-            sf.system.fatal('No cortical labels found; does the segmentation include cortical parcels?')
+            raise ValueError('No cortical labels found; does the segmentation include cortical parcels?')
         segmentation_net = None
+        # even nearest neighbour interpolation can cause issues with matching labels,
+        # so we need to handle the segmentation values
+        if np.issubdtype( ref_seg_buffer.dtype, float ):
+            ref_seg_buffer = np.round(ref_seg_buffer).astype(int)
     else:
         print('Segmenting reference image')
         print('   Reading reference image')
         ref_image, ref_aff, ref_h, ref_im_res, ref_shape, ref_pad_idx, ref_crop_idx = preprocess(path_image=ref,
                                                                                                  crop=None, min_pad=128,
-                                                                                                 path_resample=None)
+                                                                                                 path_resample=None,
+                                                                                                 autocrop=autocrop)
         print('   Setting up segmentation net')
         segmentation_net = build_seg_model(model_file_segmentation=path_model_segmentation,
                                            model_file_parcellation=path_model_parcellation,
@@ -151,13 +143,18 @@ def register_images(ref, ref_seg, flo, flo_seg, ref_reg=None, flo_reg=None, fwd_
         print('Segmentation of floating image already exists; reading from disk')
         flo_seg_buffer, flo_seg_aff, flo_h = load_volume(flo_seg, im_only=False, squeeze=True, dtype=None, aff_ref=None)
         if np.sum(flo_seg_buffer>1000)==0:
-            sf.system.fatal('No cortical labels found; does the segmentation include cortical parcels?')
+            raise ValueError('No cortical labels found; does the segmentation include cortical parcels?')
+        # even nearest neighbour interpolation can cause issues with matching labels,
+        # so we need to handle the segmentation values
+        if np.issubdtype( flo_seg_buffer.dtype, float ):
+            flo_seg_buffer = np.round(flo_seg_buffer).astype(int)
     else:
         print('Segmenting floating image')
         print('   Reading floating image')
         flo_image, flo_aff, flo_h, flo_im_res, flo_shape, ref_pad_idx, ref_crop_idx = preprocess(path_image=flo,
                                                                                                  crop=None, min_pad=128,
-                                                                                                 path_resample=None)
+                                                                                                 path_resample=None,
+                                                                                                 autocrop=autocrop)
         if segmentation_net is None:
             print('   Setting up segmentation net')
             segmentation_net = build_seg_model(model_file_segmentation=path_model_segmentation,
@@ -381,8 +378,6 @@ def register_images(ref, ref_seg, flo, flo_seg, ref_reg=None, flo_reg=None, fwd_
     print('https://www.nature.com/articles/s41598-023-33781-0')
     print(' ')
 
-def register_images_mni_152(flo, flo_seg, ref=os.path.join(fs_home, 'mni152_mricron.nii.gz'), ref_seg=os.path.join(fs_home, 'mni152_mricron_seg.nii.gz'), ref_reg=None, flo_reg=None, fwd_field=None, bak_field=None, affine_only=False, threads=1):
-    register_images(ref, ref_seg, flo, flo_seg, ref_reg, flo_reg, fwd_field, bak_field, affine_only, threads)
 
 #######################
 # Auxiliary functions #
@@ -521,16 +516,16 @@ def load_volume(path_volume, im_only=True, squeeze=True, dtype=None, aff_ref=Non
 
 
 
-def preprocess(path_image, n_levels=5, crop=None, min_pad=None, path_resample=None):
+def preprocess(path_image, n_levels=5, crop=None, min_pad=None, path_resample=None, autocrop=False):
     # read image and corresponding info
     im, _, aff, n_dims, n_channels, h, im_res = get_volume_info(path_image, True)
     if n_dims < 3:
-        sf.system.fatal('input should have 3 dimensions, had %s' % n_dims)
+        raise ValueError('input should have 3 dimensions, had %s' % n_dims)
     elif n_dims == 4 and n_channels == 1:
         n_dims = 3
         im = im[..., 0]
     elif n_dims > 3:
-        sf.system.fatal('input should have 3 dimensions, had %s' % n_dims)
+        raise ValueError('input should have 3 dimensions, had %s' % n_dims)
     elif n_channels > 1:
         print('WARNING: detected more than 1 channel, only keeping the first channel.')
         im = im[..., 0]
@@ -556,6 +551,22 @@ def preprocess(path_image, n_levels=5, crop=None, min_pad=None, path_resample=No
 
     # normalise image
     im = rescale_volume(im, new_min=0, new_max=1, min_percentile=0.5, max_percentile=99.5)
+
+    # automatically crop out obvious background
+    if autocrop and crop_idx is None:
+        nz_locs = np.argwhere(im > 0)
+        min_indices = np.min(nz_locs, axis=0)
+        max_indices = np.max(nz_locs, axis=0)
+        nz_crop = max_indices - min_indices + 2
+        crop_shape = [find_closest_number_divisible_by_m(s, 2 ** n_levels, 'higher') for s in nz_crop]
+        half_dim_diff = np.floor_divide([crop_shape[i] - nz_crop[i] for i in range(n_dims)], 2)
+        min_crop_idx = np.maximum(min_indices - half_dim_diff, 0)
+        max_crop_idx = np.minimum(min_crop_idx + crop_shape, im.shape[:n_dims])
+        crop_idx = np.concatenate([np.array(min_crop_idx), np.array(max_crop_idx)])
+        if n_dims == 2:
+            im = im[crop_idx[0]: crop_idx[2], crop_idx[1]: crop_idx[3], ...]
+        elif n_dims == 3:
+            im = im[crop_idx[0]: crop_idx[3], crop_idx[1]: crop_idx[4], crop_idx[2]: crop_idx[5], ...]
 
     # pad image
     input_shape = im.shape[:n_dims]
@@ -626,7 +637,7 @@ def find_closest_number_divisible_by_m(n, m, answer_type='lower'):
         elif answer_type == 'closer':
             return lower if (n - lower) < (higher - n) else higher
         else:
-            sf.system.fatal('answer_type should be lower, higher, or closer, had : %s' % answer_type)
+            raise ValueError('answer_type should be lower, higher, or closer, had : %s' % answer_type)
 
 
 
@@ -728,7 +739,7 @@ def build_seg_model(model_file_segmentation,
                 labels_parcellation):
 
     if not os.path.isfile(model_file_segmentation):
-        sf.system.fatal("The provided model path does not exist.")
+        raise ValueError("The provided model path does not exist.")
 
     # get labels
     n_labels_seg = len(labels_segmentation)
@@ -1294,7 +1305,7 @@ def fast_3D_interp_torch(X, II, JJ, KK, mode):
         Y[ok] = c.float()
 
     else:
-        sf.system.fatal('mode must be linear or nearest')
+        raise ValueError('mode must be linear or nearest')
 
     return Y
 
@@ -1369,7 +1380,7 @@ def crop_volume_with_idx(volume, crop_idx, aff=None, n_dims=None, return_copy=Tr
     elif n_dims == 3:
         new_volume = new_volume[crop_idx[0]:crop_idx[3], crop_idx[1]:crop_idx[4], crop_idx[2]:crop_idx[5], ...]
     else:
-        sf.system.fatal('cannot crop volumes with more than 3 dimensions')
+        raise ValueError('cannot crop volumes with more than 3 dimensions')
 
     if aff is not None:
         aff[0:3, -1] = aff[0:3, -1] + aff[:3, :3] @ crop_idx[:3]
