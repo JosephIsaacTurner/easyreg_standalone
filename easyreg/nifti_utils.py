@@ -25,5 +25,25 @@ def img_to_2mm(roi_reg_path, output_path):
     two_mm_img = nib.Nifti1Image(two_mm_img_data, affine)
     two_mm_img.to_filename(output_path)
 
-def register_images_mni_152(flo, flo_seg, ref=os.path.join(fs_home, 'mni152_mricron.nii.gz'), ref_seg=os.path.join(fs_home, 'mni152_mricron_seg.nii.gz'), ref_reg=None, flo_reg=None, fwd_field=None, bak_field=None, affine_only=False, threads=1):
-    register_images(ref, ref_seg, flo, flo_seg, ref_reg, flo_reg, fwd_field, bak_field, affine_only, threads)
+def register_images_mni_152(flo, 
+                            flo_seg, 
+                            ref=os.path.join(fs_home, 'mni152_mricron.nii.gz'), 
+                            ref_seg=os.path.join(fs_home, 'mni152_mricron_seg.nii.gz'), 
+                            ref_reg=None, 
+                            flo_reg=None, 
+                            fwd_field=None, 
+                            bak_field=None, 
+                            affine_only=False, 
+                            threads=1,
+                            autocrop=False):
+    register_images(ref=ref, 
+                    ref_seg=ref_seg, 
+                    flo=flo, 
+                    flo_seg=flo_seg, 
+                    ref_reg=ref_reg, 
+                    flo_reg=flo_reg, 
+                    fwd_field=fwd_field, 
+                    bak_field=bak_field, 
+                    affine_only=affine_only, 
+                    autocrop=autocrop, 
+                    threads=threads)

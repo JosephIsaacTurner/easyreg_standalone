@@ -24,7 +24,7 @@ pip install -e .
 Or use pip:
 
 ```bash
-pip install -e git+https://github.com/JosephIsaacTurner/easyreg_standalone.git
+pip install git+https://github.com/JosephIsaacTurner/easyreg_standalone.git
 ```
 
 ### Usage
