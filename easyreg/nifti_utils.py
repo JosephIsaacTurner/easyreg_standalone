@@ -20,8 +20,6 @@ def img_to_2mm(roi_reg_path, output_path):
     target = nib.Nifti1Image(np.zeros((91, 109, 91)), affine)
     two_mm_img = nli.resample_to_img(roi_reg, target, interpolation="nearest")
     two_mm_img_data = two_mm_img.get_fdata()
-    two_mm_img_data[two_mm_img_data < 0.9] = 0
-    two_mm_img_data[two_mm_img_data >= 0.9] = 1
     two_mm_img = nib.Nifti1Image(two_mm_img_data, affine)
     two_mm_img.to_filename(output_path)
 
