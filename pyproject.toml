@@ -35,3 +35,4 @@ Issues = "https://github.com/josephisaacturner/easyreg_standalone/issues"
 [project.scripts]
 easyreg-mri = "easyreg.mri_easyreg:main"
 easywarp-mri = "easyreg.mri_easywarp:main"
+segment-csf-gm-wm = "easyreg.custom_scripts.segment_csf_gm_wm:main"

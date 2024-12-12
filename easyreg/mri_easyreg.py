@@ -14,33 +14,30 @@ import keras
 import keras.backend as K
 import keras.layers as KL
 
-
-# set tensorflow logging
+# Set TensorFlow logging
 tf.get_logger().setLevel('ERROR')
 K.set_image_data_format('channels_last')
-
 
 # Very first thing: we require FreeSurfer
 fs_home = os.path.dirname(os.path.realpath(__file__))
 
 def main():
-
     parser = argparse.ArgumentParser(description="EasyReg: deep learning registration simple and easy", epilog='\n')
 
-    # input/outputs
+    # Input/outputs
     parser.add_argument("--ref", help="Reference image .")
     parser.add_argument("--ref_seg", help="Reference SynthSeg segmentation (will be created if it does not exist).")
     parser.add_argument("--flo", help="Floating image.")
     parser.add_argument("--flo_seg", help="Floating SynthSeg segmentation (will be created if it does not exist).")
     parser.add_argument("--ref_reg", help="(optional) Registered referenced.")
-    parser.add_argument("--flo_reg", help="(optional) Registetred floating images (in space of reference).")
+    parser.add_argument("--flo_reg", help="(optional) Registered floating images (in space of reference).")
     parser.add_argument("--fwd_field", help="(optional) Forward field")
     parser.add_argument("--bak_field", help="(optional) Inverse field")
     parser.add_argument("--affine_only", action="store_true", help="(optional) Skips nonlinear part")
     parser.add_argument("--autocrop", action="store_true", help="(optional) Ignore background voxels in FOV.")
     parser.add_argument("--threads", type=int, default=1, help="(optional) Number of cores to be used. Default is 1. You can use -1 to use all available cores")
 
-    # parse commandline
+    # Parse commandline
     args = parser.parse_args()
 
     ref = args.ref
@@ -57,8 +54,7 @@ def main():
 
     register_images(ref, ref_seg, flo, flo_seg, ref_reg, flo_reg, fwd_field, bak_field, affine_only, autocrop, threads)
 
-def register_images(ref, ref_seg, flo, flo_seg, ref_reg, flo_reg, fwd_field, bak_field, affine_only, autocrop, threads):
-
+def register_images(ref, ref_seg, flo, flo_seg, ref_reg, flo_reg, fwd_field, bak_field, affine_only, autocrop, threads, post=False):
     #############
 
     if ref is None:
@@ -72,123 +68,109 @@ def register_images(ref, ref_seg, flo, flo_seg, ref_reg, flo_reg, fwd_field, bak
     if (ref_reg is None) and (flo_reg is None) and (fwd_field is None) and (bak_field is None):
         raise ValueError('Please provide at least one of: registered reference, registered floating, forward field, or backward field')
 
-    # limit the number of threads to be used if running on CPU
+    # Limit the number of threads to be used if running on CPU
     if threads == 1:
         print('using 1 thread')
-    elif threads<0:
+    elif threads < 0:
         threads = os.cpu_count()
-        print('using all available threads ( %s )' % threads)
+        print(f'using all available threads ( {threads} )')
     else:
-        print('using %s threads' % threads)
+        print(f'using {threads} threads')
     tf.config.threading.set_inter_op_parallelism_threads(threads)
     tf.config.threading.set_intra_op_parallelism_threads(threads)
     torch.set_num_threads(threads)
 
-    # path models
-    path_model_segmentation = fs_home + '/models/synthseg_2.0.h5'
-    path_model_parcellation = fs_home + '/models/synthseg_parc_2.0.h5'
-    path_model_registration_trained = fs_home + '/models/easyreg_v10_230103.h5'
+    # Path models
+    path_model_registration_trained = os.path.join(fs_home, 'models', 'easyreg_v10_230103.h5')
 
-    # path labels
-    labels_segmentation = fs_home +  '/models/synthseg_segmentation_labels_2.0.npy'
-    labels_parcellation = fs_home +  '/models/synthseg_parcellation_labels.npy'
+    # Path labels
+    labels_segmentation_path = os.path.join(fs_home, 'models', 'synthseg_segmentation_labels_2.0.npy')
+    labels_parcellation_path = os.path.join(fs_home, 'models', 'synthseg_parcellation_labels.npy')
     atlas_volsize = [160, 160, 192]
-    atlas_aff = np.matrix([[-1, 0, 0, 79], [0, 0, 1, -104], [0, -1, 0, 79], [0, 0, 0, 1]])
+    atlas_aff = np.array([[-1, 0, 0, 79], [0, 0, 1, -104], [0, -1, 0, 79], [0, 0, 0, 1]])
 
-    # get label lists
-    labels_segmentation, _ = get_list_labels(label_list=labels_segmentation)
+    # Get label lists
+    labels_segmentation, _ = get_list_labels(label_list=labels_segmentation_path)
     labels_segmentation, unique_idx = np.unique(labels_segmentation, return_index=True)
-    labels_parcellation, _ = np.unique(get_list_labels(labels_parcellation)[0], return_index=True)
+    labels_parcellation, _ = np.unique(get_list_labels(labels_parcellation_path)[0], return_index=True)
 
-    # Segment if needed
-    if (ref_seg is not None) and os.path.exists(ref_seg):
+    # Determine if segmentation is needed
+    need_to_segment_ref = (ref_seg is not None) and (not os.path.exists(ref_seg))
+    need_to_segment_flo = (flo_seg is not None) and (not os.path.exists(flo_seg))
+
+    segmentation_net = None
+    if need_to_segment_ref or need_to_segment_flo:
+        print('Setting up segmentation net')
+        segmentation_net = build_seg_model(
+            model_file_segmentation=os.path.join(fs_home, 'models', 'synthseg_2.0.h5'),
+            model_file_parcellation=os.path.join(fs_home, 'models', 'synthseg_parc_2.0.h5'),
+            labels_segmentation=labels_segmentation,
+            labels_parcellation=labels_parcellation
+        )
+
+    # Segment reference image
+    if need_to_segment_ref:
+        ref_seg_buffer, ref_seg_aff, ref_h, _ = segment_image(
+            path_image=ref,
+            path_seg=ref_seg,
+            segmentation_net=segmentation_net,
+            labels_segmentation=labels_segmentation,
+            labels_parcellation=labels_parcellation,
+            autocrop=autocrop,
+            post=post
+        )
+    else:
         print('Segmentation of reference image already exists; reading from disk')
-        ref_seg_buffer, ref_seg_aff, ref_h = load_volume(ref_seg, im_only=False, squeeze=True, dtype=None, aff_ref=None)
-        if np.sum(ref_seg_buffer>1000)==0:
+        ref_seg_buffer, ref_seg_aff, ref_h = load_volume(
+            ref_seg,
+            im_only=False,
+            squeeze=True,
+            dtype=None,
+            aff_ref=None
+        )
+        if np.sum(ref_seg_buffer > 1000) == 0:
             raise ValueError('No cortical labels found; does the segmentation include cortical parcels?')
-        segmentation_net = None
-        # even nearest neighbour interpolation can cause issues with matching labels,
-        # so we need to handle the segmentation values
-        if np.issubdtype( ref_seg_buffer.dtype, float ):
+        if np.issubdtype(ref_seg_buffer.dtype, float):
             ref_seg_buffer = np.round(ref_seg_buffer).astype(int)
-    else:
-        print('Segmenting reference image')
-        print('   Reading reference image')
-        ref_image, ref_aff, ref_h, ref_im_res, ref_shape, ref_pad_idx, ref_crop_idx = preprocess(path_image=ref,
-                                                                                                 crop=None, min_pad=128,
-                                                                                                 path_resample=None,
-                                                                                                 autocrop=autocrop)
-        print('   Setting up segmentation net')
-        segmentation_net = build_seg_model(model_file_segmentation=path_model_segmentation,
-                                           model_file_parcellation=path_model_parcellation,
-                                           labels_segmentation=labels_segmentation,
-                                           labels_parcellation=labels_parcellation)
-        print('   Inference / segmentation')
-        post_patch_segmentation, post_patch_parcellation = segmentation_net.predict(ref_image)
-        print('   Postprocessing')
-        ref_seg_buffer, _, _ = postprocess(post_patch_seg=post_patch_segmentation,
-                                           post_patch_parc=post_patch_parcellation,
-                                           shape=ref_shape,
-                                           pad_idx=ref_pad_idx,
-                                           crop_idx=ref_crop_idx,
-                                           labels_segmentation=labels_segmentation,
-                                           labels_parcellation=labels_parcellation,
-                                           aff=ref_aff,
-                                           im_res=ref_im_res)
-        print('   Saving result')
-        ref_seg_aff = ref_aff
-        save_volume(ref_seg_buffer, ref_seg_aff, ref_h, ref_seg, dtype='int32')
 
-    if (flo_seg is not None) and os.path.exists(flo_seg):
-        print('Segmentation of floating image already exists; reading from disk')
-        flo_seg_buffer, flo_seg_aff, flo_h = load_volume(flo_seg, im_only=False, squeeze=True, dtype=None, aff_ref=None)
-        if np.sum(flo_seg_buffer>1000)==0:
-            raise ValueError('No cortical labels found; does the segmentation include cortical parcels?')
-        # even nearest neighbour interpolation can cause issues with matching labels,
-        # so we need to handle the segmentation values
-        if np.issubdtype( flo_seg_buffer.dtype, float ):
-            flo_seg_buffer = np.round(flo_seg_buffer).astype(int)
+    # Segment floating image
+    if need_to_segment_flo:
+        flo_seg_buffer, flo_seg_aff, flo_h, _ = segment_image(
+            path_image=flo,
+            path_seg=flo_seg,
+            segmentation_net=segmentation_net,
+            labels_segmentation=labels_segmentation,
+            labels_parcellation=labels_parcellation,
+            autocrop=autocrop,
+            post=post
+        )
     else:
-        print('Segmenting floating image')
-        print('   Reading floating image')
-        flo_image, flo_aff, flo_h, flo_im_res, flo_shape, ref_pad_idx, ref_crop_idx = preprocess(path_image=flo,
-                                                                                                 crop=None, min_pad=128,
-                                                                                                 path_resample=None,
-                                                                                                 autocrop=autocrop)
-        if segmentation_net is None:
-            print('   Setting up segmentation net')
-            segmentation_net = build_seg_model(model_file_segmentation=path_model_segmentation,
-                                               model_file_parcellation=path_model_parcellation,
-                                               labels_segmentation=labels_segmentation,
-                                               labels_parcellation=labels_parcellation)
-        print('   Inference / segmentation')
-        post_patch_segmentation, post_patch_parcellation = segmentation_net.predict(flo_image)
-        print('   Postprocessing')
-        flo_seg_buffer, _, _ = postprocess(post_patch_seg=post_patch_segmentation,
-                                           post_patch_parc=post_patch_parcellation,
-                                           shape=flo_shape,
-                                           pad_idx=ref_pad_idx,
-                                           crop_idx=ref_crop_idx,
-                                           labels_segmentation=labels_segmentation,
-                                           labels_parcellation=labels_parcellation,
-                                           aff=flo_aff,
-                                           im_res=flo_im_res)
-        print('   Saving result')
-        flo_seg_aff = flo_aff
-        save_volume(flo_seg_buffer, flo_seg_aff, flo_h, flo_seg, dtype='int32')
+        print('Segmentation of floating image already exists; reading from disk')
+        flo_seg_buffer, flo_seg_aff, flo_h = load_volume(
+            flo_seg,
+            im_only=False,
+            squeeze=True,
+            dtype=None,
+            aff_ref=None
+        )
+        if np.sum(flo_seg_buffer > 1000) == 0:
+            raise ValueError('No cortical labels found; does the segmentation include cortical parcels?')
+        if np.issubdtype(flo_seg_buffer.dtype, float):
+            flo_seg_buffer = np.round(flo_seg_buffer).astype(int)
 
     # Now the linear registration part
     print('Linear registration')
 
     print('  Computing centroids and estimating affine transform')
     labels = np.array([2,4,5,7,8,10,11,12,13,14,15,16,17,18,26,28,41,43,44,46,47,49,50,51,52,53,54,58,60,
-                                    1001,1002,1003,1005,1006,1007,1008,1009,1010,1011,1012,1013,1014,1015,1016,1017,1018,1019,1020,1021,1022,1023,1024,1025,1026,1027,1028,1029,1030,1031,1032,1033,1034,1035,
-                                    2001,2002,2003,2005,2006,2007,2008,2009,2010,2011,2012,2013,2014,2015,2016,2017,2018,2019,2020,2021,2022,2023,2024,2025,2026,2027,2028,2029,2030,2031,2032,2033,2034,2035])
+                      1001,1002,1003,1005,1006,1007,1008,1009,1010,1011,1012,1013,1014,1015,1016,1017,1018,1019,1020,1021,1022,1023,1024,1025,1026,1027,1028,1029,1030,1031,1032,1033,1034,1035,
+                      2001,2002,2003,2005,2006,2007,2008,2009,2010,2011,2012,2013,2014,2015,2016,2017,2018,2019,2020,2021,2022,2023,2024,2025,2026,2027,2028,2029,2030,2031,2032,2033,2034,2035])
     nlab = len(labels)
     atlasCOG = np.array([[-28.,-18.,-37.,-19.,-27.,-19.,-23.,-31.,-26.,-2.,-3.,-3.,-29.,-26.,-14.,-14.,24.,14.,31.,12.,18.,14.,19.,26.,21.,25.,22.,11.,8.,-52.,-6.,-36.,-7.,-24.,-37.,-39.,-52.,-9.,-27.,-26.,-14.,-8.,-59.,-28.,-7.,-49.,-43.,-47.,-12.,-46.,-6.,-43.,-10.,-7.,-33.,-11.,-23.,-55.,-50.,-10.,-29.,-46.,-38.,48.,4.,31.,3.,21.,33.,37.,47.,3.,24.,20.,8.,4.,54.,21.,5.,45.,38.,46.,8.,45.,3.,38.,6.,4.,29.,9.,19.,51.,49.,10.,24.,43.,33.],
-                        [-30.,-17.,-13.,-36.,-40.,-22.,-3.,-5.,-9.,-14.,-31.,-21.,-15.,-1.,3.,-16.,-32.,-20.,-14.,-37.,-42.,-24.,-3.,-6.,-10.,-15.,-2.,3.,-17.,-44.,-5.,-15.,-71.,2.,-29.,-70.,-23.,-44.,-73.,22.,-57.,27.,-19.,-23.,-45.,4.,31.,20.,-68.,-38.,-33.,-26.,-60.,23.,22.,0.,-72.,-12.,-49.,49.,17.,-25.,-3.,-42.,-1.,-16.,-76.,0.,-34.,-69.,-16.,-44.,-73.,22.,-56.,28.,-18.,-25.,-45.,-3.,30.,14.,-69.,-37.,-32.,-30.,-60.,21.,21.,0.,-72.,-11.,-49.,48.,15.,-27.,-3.],
-                        [12.,14.,-13.,-41.,-51.,1.,13.,3.,1.,0.,-40.,-28.,-15.,-10.,2.,-7.,11.,14.,-12.,-40.,-51.,2.,14.,4.,2.,-14.,-10.,4.,-7.,-8.,32.,40.,-14.,-21.,-28.,-4.,-28.,-3.,-35.,3.,-29.,4.,-17.,-21.,35.,18.,9.,20.,-24.,28.,25.,34.,7.,18.,35.,48.,16.,-5.,12.,22.,-18.,1.,4.,-12.,32.,43.,-11.,-21.,-29.,-3.,-27.,0.,-34.,3.,-25.,6.,-18.,-20.,36.,18.,11.,20.,-20.,26.,25.,34.,4.,24.,34.,47.,17.,-5.,10.,20.,-18.,0.,4.]])
+                          [-30.,-17.,-13.,-36.,-40.,-22.,-3.,-5.,-9.,-14.,-31.,-21.,-15.,-1.,3.,-16.,-32.,-20.,-14.,-37.,-42.,-24.,-3.,-6.,-10.,-15.,-2.,3.,-17.,-44.,-5.,-15.,-71.,2.,-29.,-70.,-23.,-44.,-73.,22.,-57.,27.,-19.,-23.,-45.,4.,31.,20.,-68.,-38.,-33.,-26.,-60.,23.,22.,0.,-72.,-12.,-49.,49.,17.,-25.,-3.,-42.,-1.,-16.,-76.,0.,-34.,-69.,-16.,-44.,-73.,22.,-56.,28.,-18.,-25.,-45.,-3.,30.,14.,-69.,-37.,-32.,-30.,-60.,21.,21.,0.,-72.,-11.,-49.,48.,15.,-27.,-3.],
+                          [12.,14.,-13.,-41.,-51.,1.,13.,3.,1.,0.,-40.,-28.,-15.,-10.,2.,-7.,11.,14.,-12.,-40.,-51.,2.,14.,4.,2.,-14.,-10.,4.,-7.,-8.,32.,40.,-14.,-21.,-28.,-4.,-28.,-3.,-35.,3.,-29.,4.,-17.,-21.,35.,18.,9.,20.,-24.,28.,25.,34.,7.,18.,35.,48.,16.,-5.,12.,22.,-18.,1.,4.,-12.,32.,43.,-11.,-21.,-29.,-3.,-27.,0.,-34.,3.,-25.,6.,-18.,-20.,36.,18.,11.,20.,-20.,26.,25.,34.,4.,24.,34.,47.,17.,-5.,10.,20.,-18.,0.,4.]])
 
+    # Compute centroids for reference image
     refCOG = np.zeros([4, nlab])
     ok = np.ones(nlab)
     for l in range(nlab):
@@ -203,6 +185,7 @@ def register_images(ref, ref_seg, flo, flo_seg, ref_reg, flo_reg, fwd_field, bak
     refCOG = np.matmul(ref_seg_aff, refCOG)[:-1, :]
     Mref = getM(atlasCOG[:, ok > 0], refCOG[:, ok > 0])
 
+    # Compute centroids for floating image
     floCOG = np.zeros([4, nlab])
     ok = np.ones(nlab)
     for l in range(nlab):
@@ -266,16 +249,27 @@ def register_images(ref, ref_seg, flo, flo_seg, ref_reg, flo_reg, fwd_field, bak
     # Now the nonlinear registration part (if needed)
     if affine_only:
         print('Skipping nonlinear registration')
-
     else:
-
         source = tf.keras.Input(shape=(*atlas_volsize, 1))
         target = tf.keras.Input(shape=(*atlas_volsize, 1))
 
-        config = {'name': 'vxm_dense', 'fill_value': None, 'input_model': None, 'unet_half_res': True, 'trg_feats': 1,
-         'src_feats': 1, 'use_probs': False, 'bidir': False, 'int_downsize': 2, 'int_steps': 10,
-         'nb_unet_conv_per_level': 1, 'unet_feat_mult': 1, 'nb_unet_levels': None,
-         'nb_unet_features': [[256, 256, 256, 256], [256, 256, 256, 256, 256, 256]], 'inshape': atlas_volsize}
+        config = {
+            'name': 'vxm_dense',
+            'fill_value': None,
+            'input_model': None,
+            'unet_half_res': True,
+            'trg_feats': 1,
+            'src_feats': 1,
+            'use_probs': False,
+            'bidir': False,
+            'int_downsize': 2,
+            'int_steps': 10,
+            'nb_unet_conv_per_level': 1,
+            'unet_feat_mult': 1,
+            'nb_unet_levels': None,
+            'nb_unet_features': [[256, 256, 256, 256], [256, 256, 256, 256, 256, 256]],
+            'inshape': atlas_volsize
+        }
         cnn = vxm.networks.VxmDense(**config)
         cnn.load_weights(path_model_registration_trained, by_name=True)
         svf1 = cnn([source, target])[1]
@@ -287,7 +281,7 @@ def register_images(ref, ref_seg, flo, flo_seg, ref_reg, flo_reg, fwd_field, bak
         pos_def = vxm.layers.RescaleTransform(2)(pos_def_small)
         neg_def = vxm.layers.RescaleTransform(2)(neg_def_small)
         model = tf.keras.Model(inputs=[source, target],
-                                      outputs=[pos_def, neg_def])
+                               outputs=[pos_def, neg_def])
         model.load_weights(path_model_registration_trained)
 
         pred = model.predict([Rlin.detach().numpy()[np.newaxis, ..., np.newaxis], Flin.detach().numpy()[np.newaxis, ..., np.newaxis]])
@@ -295,7 +289,7 @@ def register_images(ref, ref_seg, flo, flo_seg, ref_reg, flo_reg, fwd_field, bak
         r2f_field = torch.tensor(np.squeeze(pred[0]))
         f2r_field = torch.tensor(np.squeeze(pred[1]))
 
-    # concatenate transforms and save outputs
+    # Concatenate transforms and save outputs
     print('Deforming and writing to disk')
 
     if (fwd_field is not None) or (flo_reg is not None):
@@ -383,6 +377,102 @@ def register_images(ref, ref_seg, flo, flo_seg, ref_reg, flo_reg, fwd_field, bak
 # Auxiliary functions #
 #######################
 
+
+def segment_image(path_image, path_seg, segmentation_net=None, labels_segmentation=None, labels_parcellation=None, autocrop=True, post=False):
+    """
+    Segments a single image using the provided segmentation network.
+
+    Parameters:
+    - path_image: Path to the input image.
+    - path_seg: Path to save or load the segmentation.
+    - segmentation_net: (Optional) The pre-built segmentation network.
+                        If None, it will be built using default model paths.
+    - labels_segmentation: (Optional) Array of segmentation labels.
+                           If None, it will be loaded from the default label path.
+    - labels_parcellation: (Optional) Array of parcellation labels.
+                            If None, it will be loaded from the default label path.
+    - autocrop: Boolean indicating whether to autocrop the image. Defaults to True.
+
+    Returns:
+    - seg_buffer: The segmented image data.
+    - seg_aff: Affine matrix of the segmentation.
+    - seg_header: Header information of the segmentation.
+    """
+    # Define default paths
+    default_model_segmentation = os.path.join(fs_home, 'models', 'synthseg_2.0.h5')
+    default_model_parcellation = os.path.join(fs_home, 'models', 'synthseg_parc_2.0.h5')
+    default_labels_segmentation_path = os.path.join(fs_home, 'models', 'synthseg_segmentation_labels_2.0.npy')
+    default_labels_parcellation_path = os.path.join(fs_home, 'models', 'synthseg_parcellation_labels.npy')
+
+    # Load labels if not provided
+    if labels_segmentation is None:
+        print('Loading default segmentation labels...')
+        labels_segmentation, _ = get_list_labels(label_list=default_labels_segmentation_path)
+        labels_segmentation, unique_idx = np.unique(labels_segmentation, return_index=True)
+    if labels_parcellation is None:
+        print('Loading default parcellation labels...')
+        labels_parcellation, _ = get_list_labels(label_list=default_labels_parcellation_path)
+
+    # Build segmentation_net if not provided
+    if segmentation_net is None:
+        print('Building segmentation network with default model paths...')
+        segmentation_net = build_seg_model(
+            model_file_segmentation=default_model_segmentation,
+            model_file_parcellation=default_model_parcellation,
+            labels_segmentation=labels_segmentation,
+            labels_parcellation=labels_parcellation
+        )
+
+    # Check if segmentation already exists
+    if path_seg is not None and os.path.exists(path_seg):
+        print(f'Segmentation of image {path_image} already exists; reading from disk')
+        seg_buffer, seg_aff, seg_header = load_volume(
+            path_seg,
+            im_only=False,
+            squeeze=True,
+            dtype=None,
+            aff_ref=None
+        )
+        posteriors = None
+        # Validate segmentation
+        if np.sum(seg_buffer > 1000) == 0:
+            raise ValueError('No cortical labels found; does the segmentation include cortical parcels?')
+        if np.issubdtype(seg_buffer.dtype, float):
+            seg_buffer = np.round(seg_buffer).astype(int)
+    else:
+        print(f'Segmenting image {path_image}')
+        print('   Reading image')
+        image, aff, header, im_res, shape, pad_idx, crop_idx = preprocess(
+            path_image=path_image,
+            crop=None,
+            min_pad=128,
+            path_resample=None,
+            autocrop=autocrop
+        )
+        print('   Inference / segmentation')
+        post_patch_segmentation, post_patch_parcellation = segmentation_net.predict(image)
+        print('   Postprocessing')
+        seg_buffer, posteriors, _ = postprocess(
+            post_patch_seg=post_patch_segmentation,
+            post_patch_parc=post_patch_parcellation,
+            shape=shape,
+            pad_idx=pad_idx,
+            crop_idx=crop_idx,
+            labels_segmentation=labels_segmentation,
+            labels_parcellation=labels_parcellation,
+            aff=aff,
+            im_res=im_res
+        )
+        print('   Saving result')
+        seg_aff = aff
+        seg_header = header
+        save_volume(seg_buffer, seg_aff, seg_header, path_seg, dtype='int32')
+        
+        if post and posteriors is not None:
+            post_path = path_seg.replace('.nii', '_posteriors.nii')
+            save_volume(posteriors, seg_aff, seg_header, post_path, dtype='float32')
+    
+    return seg_buffer, seg_aff, seg_header, posteriors
 
 def get_list_labels(label_list=None, save_label_list=None, FS_sort=False):
 
