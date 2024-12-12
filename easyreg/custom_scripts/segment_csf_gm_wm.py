@@ -3,6 +3,10 @@ from nilearn.maskers import NiftiMasker
 from easyreg import segment_image_mni152
 from nilearn.image import smooth_img
 import argparse
+from pathlib import Path
+import os
+
+easyreg_dir = Path(__file__).resolve().parent.parent
 
 def segment_t1(raw_img_path):
     """
@@ -52,7 +56,7 @@ def extract_csf_labels(path):
     From the 32 labels, we select the ones that correspond to CSF.
     Ventricles are considered CSF.
     """
-    masker = NiftiMasker(mask_img='MNI152_T1_1mm_brain_mask_dil.nii.gz')
+    masker = NiftiMasker(mask_img=os.path.join(easyreg_dir, 'MNI152_T1_1mm_brain_mask_dil.nii.gz'))
     data = masker.fit_transform(path)
     data_csf = data[[3,4,11,12,16,21,22],: ]
     data_csf = np.nan_to_num(data_csf)
@@ -65,7 +69,7 @@ def extract_gm_labels(path):
     """
     From the 32 labels, we select the ones that correspond to GM.
     """
-    masker = NiftiMasker(mask_img='MNI152_T1_1mm_brain_mask_dil.nii.gz')
+    masker = NiftiMasker(mask_img=os.path.join(easyreg_dir, 'MNI152_T1_1mm_brain_mask_dil.nii.gz'))
     data = masker.fit_transform(path)
     data_csf = data[[2,6,7,8,9,10,14,15,17,20,24,25,26,27,28,29,30,31],: ]
     data_csf = np.max(data_csf, axis=0)
@@ -78,7 +82,7 @@ def extract_wm_labels(path):
     From the 32 labels, we select the ones that correspond to WM. 
     Brainstem and tectum are considered WM.
     """
-    masker = NiftiMasker(mask_img='MNI152_T1_1mm_brain_mask_dil.nii.gz')
+    masker = NiftiMasker(mask_img=os.path.join(easyreg_dir, 'MNI152_T1_1mm_brain_mask_dil.nii.gz'))
     data = masker.fit_transform(path)
     data_csf = data[[1,5,13,18,19,23,32],: ]
     data_csf = np.max(data_csf, axis=0)
@@ -91,7 +95,7 @@ def compute_deterministic_atlas(raw_img_path, gm_img_path, wm_img_path, csf_img_
     Function to compute the deterministic atlas from the GM, WM, and CSF images.
     By design, there will be no overlap between the three labels.
     """
-    masker = NiftiMasker(mask_img='MNI152_T1_1mm_brain_mask_dil.nii.gz')
+    masker = NiftiMasker(mask_img=os.path.join(easyreg_dir, 'MNI152_T1_1mm_brain_mask_dil.nii.gz'))
     data = masker.fit_transform([gm_img_path, wm_img_path, csf_img_path])
     data = np.argmax(data, axis=0)
     data += 1 # That way the labels are 1, 2, 3
