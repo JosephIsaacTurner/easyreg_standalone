@@ -19,11 +19,11 @@ def main():
     # parse commandline
     args = parser.parse_args()
 
-    i = args.get('i', None)
-    o = args.get('o', None)
-    field = args.get('field', None)
-    nearest = args.get('nearest', False)
-    threads = args.get('threads', 1)
+    i       = getattr(args, 'i', None)
+    o       = getattr(args, 'o', None)
+    field   = getattr(args, 'field', None)
+    nearest = getattr(args, 'nearest', False)
+    threads = getattr(args, 'threads', 1)
 
     warp_image(i, o, field, nearest=nearest, threads=threads)
 
